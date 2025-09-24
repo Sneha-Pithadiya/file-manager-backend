@@ -3,10 +3,24 @@ from app.database import engine, Base
 from app.auth import routes as auth_routes
 from app.users import routes as user_routes
 from app.files import routes as file_routes
+from fastapi.middleware.cors import CORSMiddleware
 
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="File Manager - Backend (User module)")
+origins = [
+    "http://localhost:5173",  
+    "http://127.0.0.1:5173",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],  
+    allow_headers=["*"],  
+)
+
 
 app.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
 app.include_router(user_routes.router, prefix="/users", tags=["users"])

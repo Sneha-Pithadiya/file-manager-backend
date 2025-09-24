@@ -9,27 +9,28 @@ from app.auth import utils
 router = APIRouter()
 
 
-@router.post("/register", response_model=schemas.UserOut, summary="Register a new user")
+@router.post("/register", response_model=schemas.UserOut)
 def register(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
     existing = utils.get_user_by_username(db, user_in.username)
     if existing:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already registered")
+        raise HTTPException(400, "Username already registered")
     hashed = utils.get_password_hash(user_in.password)
-    user = models.User(username=user_in.username, full_name=user_in.full_name, hashed_password=hashed)
+    user = models.User(
+        username=user_in.username,
+        full_name=user_in.full_name,
+        hashed_password=hashed
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
 
 
-@router.post("/login", response_model=schemas.Token, summary="Login to get access token")
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = utils.authenticate_user(db, form_data.username, form_data.password)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+@router.post("/login", response_model=schemas.Token)
+def login(user_in: schemas.UserLogin, db: Session = Depends(get_db)):
+    user = utils.get_user_by_username(db, user_in.username)
+    if not user or not utils.verify_password(user_in.password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Invalid username or password")
+
     access_token = utils.create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
