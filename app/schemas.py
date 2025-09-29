@@ -7,6 +7,10 @@ class UserCreate(BaseModel):
     password: str
     full_name: Optional[str] = None
 
+class FolderCreate(BaseModel):
+    name: str
+    parent_id: Optional[int] = None  # optional nested folder
+
 class UserOut(BaseModel):
     id: int
     username: str

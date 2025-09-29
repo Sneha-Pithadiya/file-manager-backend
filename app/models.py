@@ -2,7 +2,12 @@ from sqlalchemy import Column, ForeignKey, Integer, String, Boolean, DateTime
 from sqlalchemy.sql import func
 from app.database import Base
 from sqlalchemy.orm import relationship
+from pydantic import BaseModel
 
+class FolderCreate(BaseModel):
+    name: str
+    parent_id: int = None  
+    
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
@@ -11,6 +16,7 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
 
 class File(Base):
     __tablename__ = "files"
@@ -24,6 +30,13 @@ class File(Base):
     uploaded_by = relationship("User")
     downloads = relationship("DownloadLog", back_populates="file")
     logs = relationship("FileLog", back_populates="file")
+    parent_id = Column(Integer, ForeignKey("files.id"), nullable=True)
+    parent = relationship(
+        "File",
+        remote_side=[id],   
+        backref="children",
+        foreign_keys=[parent_id]
+    )
 
 
 class DownloadLog(Base):
@@ -41,7 +54,7 @@ class FileLog(Base):
     __tablename__ = "file_logs"
     id = Column(Integer, primary_key=True, index=True)
     file_id = Column(Integer, ForeignKey("files.id"))
-    action = Column(String, nullable=False)  # 'upload' or 'download'
+    action = Column(String, nullable=False)  
     user_id = Column(Integer, ForeignKey("users.id"))
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
