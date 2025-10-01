@@ -3,6 +3,7 @@ from sqlalchemy.sql import func
 from app.database import Base
 from sqlalchemy.orm import relationship
 from pydantic import BaseModel
+from datetime import datetime
 
 class FolderCreate(BaseModel):
     name: str
@@ -15,16 +16,16 @@ class User(Base):
     full_name = Column(String, nullable=True)
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime(timezone=True), default=datetime.now())
     
 
 class File(Base):
     __tablename__ = "files"
     id = Column(Integer, primary_key=True, index=True)
-    filename = Column(String, unique=True, index=True, nullable=False)
+    filename = Column(String,  index=True, nullable=False)
     original_name = Column(String, nullable=False)
     uploaded_by_id = Column(Integer, ForeignKey("users.id"))
-    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+    uploaded_at = Column(DateTime(timezone=True), default=datetime.now())
     is_folder = Column(Boolean, default=False)  
 
     uploaded_by = relationship("User")
@@ -44,7 +45,7 @@ class DownloadLog(Base):
     id = Column(Integer, primary_key=True, index=True)
     file_id = Column(Integer, ForeignKey("files.id"))
     user_id = Column(Integer, ForeignKey("users.id"))
-    downloaded_at = Column(DateTime(timezone=True), server_default=func.now())
+    downloaded_at = Column(DateTime(timezone=True), default=datetime.now())
 
     file = relationship("File", back_populates="downloads")
     user = relationship("User")
@@ -56,7 +57,21 @@ class FileLog(Base):
     file_id = Column(Integer, ForeignKey("files.id"))
     action = Column(String, nullable=False)  
     user_id = Column(Integer, ForeignKey("users.id"))
-    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    timestamp = Column(DateTime(timezone=True), default=datetime.now())
 
     file = relationship("File", back_populates="logs")
     user = relationship("User")
+    
+class RecycleBin(Base):
+    __tablename__ = "recycle_bin"
+
+    id = Column(Integer, primary_key=True, index=True)
+    filename = Column(String, index=True, nullable=False)
+    original_name = Column(String, nullable=False)
+    deleted_by_id = Column(Integer, ForeignKey("users.id"))
+    deleted_at = Column(DateTime(timezone=True), default=datetime.now)
+    is_folder = Column(Boolean, default=False)
+    parent_id = Column(Integer, nullable=True)  
+
+    deleted_by = relationship("User")
+

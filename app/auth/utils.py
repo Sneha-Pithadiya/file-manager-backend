@@ -44,21 +44,19 @@ def authenticate_user(db: Session, username: str, password: str):
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    print("Token received:", token)
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        print("Decoded payload:", payload)
         username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-        token_data = TokenData(username=username)
-    except JWTError:
-        raise credentials_exception
-
-    user = get_user_by_username(db, token_data.username)
+        print("Username from token:", username)
+    except JWTError as e:
+        print("JWT decode error:", e)
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    
+    user = get_user_by_username(db, username)
+    print("User from DB:", user)
     if user is None:
-        raise credentials_exception
+        raise HTTPException(status_code=401, detail="User not found")
+    
     return user
