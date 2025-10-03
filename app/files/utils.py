@@ -1,6 +1,8 @@
 from pathlib import Path
 from datetime import datetime
 
+from app import models
+
 UPLOAD_DIR = Path("uploads")
 LOG_DIR = Path("file_logs")
 
@@ -9,7 +11,6 @@ LOG_DIR.mkdir(exist_ok=True)
 
 
 def secure_filename(filename: str) -> str:
-    # Very simple example — you can improve
     return filename.replace(" ", "_")
 
 
@@ -27,4 +28,13 @@ def append_log(file_id: int, message: str):
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")  
     with open(log_file, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] {message}\n")
+        
+def get_folder_full_path(folder: models.File):
+    """Return the full path on disk for a folder object."""
+    parts = [folder.filename]
+    parent = folder.parent
+    while parent:
+        parts.insert(0, parent.filename)
+        parent = parent.parent
+    return UPLOAD_DIR.joinpath(*parts)
 

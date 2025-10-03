@@ -20,3 +20,7 @@ file_logs/
 
 # Environment variables
 .env
+
+storage/
+
+files/old.py

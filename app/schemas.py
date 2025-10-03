@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional
 from datetime import datetime
 
 class UserCreate(BaseModel):
@@ -9,7 +9,19 @@ class UserCreate(BaseModel):
 
 class FolderCreate(BaseModel):
     name: str
-    parent_id: Optional[int] = None  # optional nested folder
+    parent_id: Optional[int] = None 
+
+class FolderResponse(BaseModel):
+    id: int
+    name: str
+    parent_id: Optional[int] = None
+    created_at: datetime
+    children: Optional[List["FolderResponse"]] = None  
+
+    class Config:
+        orm_mode = True
+
+FolderResponse.update_forward_refs()
 
 class UserOut(BaseModel):
     id: int
