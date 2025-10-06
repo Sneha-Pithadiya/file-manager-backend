@@ -43,3 +43,7 @@ class TokenData(BaseModel):
 class UserLogin(BaseModel):
     username: str
     password: str
+
+class CopyRequest(BaseModel):
+    file_ids: List[int]
+    destination_folder_id: Optional[int] = None

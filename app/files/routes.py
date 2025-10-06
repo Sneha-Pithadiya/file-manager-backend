@@ -14,6 +14,8 @@ from app import models
 from app.files import utils
 from pydantic import BaseModel
 
+from app.schemas import CopyRequest
+
 router = APIRouter()
 
 UPLOAD_DIR = Path("uploads")
@@ -291,3 +293,86 @@ def delete_file_or_folder_db(
     db.commit()
 
     return {"deleted_file_id": file_id, "status": "moved to recycle bin (DB only)"}
+
+def recursive_copy(file_db, dest_folder_id, db: Session):
+    """
+    Copy a file or folder (with all nested contents) to destination folder.
+    Returns list of new file DB objects.
+    """
+    new_file = models.File(
+        filename=file_db.filename,
+        original_name=file_db.original_name,
+        is_folder=file_db.is_folder,
+        parent_id=dest_folder_id,
+        uploaded_by_id=file_db.uploaded_by_id
+    )
+    db.add(new_file)
+    db.commit()
+    db.refresh(new_file)
+
+    if file_db.is_folder:
+        src_path = utils.get_folder_full_path(file_db)
+        dest_path = utils.get_folder_full_path(new_file)
+        shutil.copytree(src_path, dest_path)
+        
+        for child in file_db.children:
+            recursive_copy(child, new_file.id, db)
+    else:
+        src_path = utils.UPLOAD_DIR / file_db.filename
+        dest_path = utils.UPLOAD_DIR / new_file.filename
+        shutil.copy2(src_path, dest_path)
+
+    utils.append_log(new_file.id, f"{file_db.uploaded_by.username} copied {file_db.filename}")
+
+    return new_file
+
+def copy_file_or_folder(src: models.File, dest_folder: models.File, db: Session, current_user: models.User):
+    src_path = UPLOAD_DIR / src.filename
+    dest_path = UPLOAD_DIR / dest_folder.filename / src.filename if dest_folder else UPLOAD_DIR / src.filename
+
+    if src.is_folder:
+        shutil.copytree(src_path, dest_path)
+    else:
+        shutil.copy2(src_path, dest_path)
+
+    new_file = models.File(
+        filename=src.filename,
+        original_name=src.original_name,
+        uploaded_by_id=current_user.id,
+        is_folder=src.is_folder,
+        parent_id=dest_folder.id if dest_folder else None,
+    )
+    db.add(new_file)
+    db.commit()
+    db.refresh(new_file)
+    return new_file
+
+@router.post("/copy")
+@router.post("/copy")
+def copy_files(
+    request: CopyRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)
+):
+    dest_folder = None
+    if request.destination_folder_id:
+        dest_folder = db.query(models.File).filter(
+            models.File.id == request.destination_folder_id,
+            models.File.is_folder==True
+        ).first()
+        if not dest_folder:
+            raise HTTPException(404, "Destination folder not found")
+
+    copied_files = []
+    for file_id in request.file_ids:
+        src_file = db.query(models.File).filter(models.File.id == file_id).first()
+        if not src_file:
+            continue
+        new_file = copy_file_or_folder(src_file, dest_folder, db, current_user)
+        copied_files.append({
+            "id": new_file.id, 
+            "name": new_file.filename, 
+            "type": "folder" if new_file.is_folder else "file"
+        })
+
+    return {"copied_files": copied_files}
