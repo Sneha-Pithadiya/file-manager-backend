@@ -1,4 +1,4 @@
-from sqlalchemy import Column, ForeignKey, Integer, String, Boolean, DateTime
+from sqlalchemy import Column, ForeignKey, Integer, String, Boolean, DateTime, Float
 from sqlalchemy.sql import func
 from app.database import Base
 from sqlalchemy.orm import relationship
@@ -38,6 +38,7 @@ class File(Base):
         backref="children",
         foreign_keys=[parent_id]
     )
+    size = Column(Float, default=0)
 
 
 class DownloadLog(Base):
