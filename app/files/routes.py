@@ -231,7 +231,7 @@ async def upload_file_or_folder(
         db.commit()
         db.refresh(file_db)
        
-        utils.append_log(file_db.id, f"{current_user.username} uploaded file")
+        utils.append_log(file_db.id, f"{current_user.username} uploaded file '{file.filename}")
         if parent_id :
             db.add()
 
@@ -357,6 +357,7 @@ def delete_file_or_folder_db(
     file_db = db.query(models.File).filter(models.File.id == file_id).first()
     if not file_db:
         raise HTTPException(404, "File/Folder not found")
+    utils.append_log(file_db.id,f"{current_user.username} delete file {file_db.filename} at {datetime.now()}")
 
     move_to_recycle_bin_db(file_db, current_user, db)
 
@@ -495,7 +496,8 @@ def move_files(
 
     return {"moved_files": moved_files}
 @router.put("/rename")
-def rename_file_or_folder(file_id: int, new_name: str, db: Session = Depends(get_db)):
+def rename_file_or_folder(file_id: int, new_name: str, db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)):
     file = db.query(models.File).filter(models.File.id == file_id).first()
     if not file:
         raise HTTPException(status_code=404, detail="File/folder not found")
@@ -512,7 +514,23 @@ def rename_file_or_folder(file_id: int, new_name: str, db: Session = Depends(get
         file.filename = new_name  
         file.original_name = new_name
         db.commit()
+        utils.append_log(file.id,f"{current_user.username} Renamed file '{old_name}' with '{new_name}'")
         db.refresh(file)
         return {"message": f"Renamed '{old_name}' to '{new_name}'"}
     except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    
+@router.put("/star")
+def star_file_or_folder(file_id: int, db:Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    file = db.query(models.File).filter(models.File.id == file_id).first()
+    if not file:
+        raise HTTPException(status_code=404, detail="File/folder not found")
+    try:
+       
+        file.is_star = not file.is_star
+        db.commit()
+        utils.append_log(file.id, f"{current_user.username} Starred {file.filename}.")
+    except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=500, detail=str(e))

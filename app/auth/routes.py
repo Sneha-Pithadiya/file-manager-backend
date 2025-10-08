@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from fastapi.security import OAuth2PasswordRequestForm
 
@@ -34,3 +35,8 @@ def login(user_in: schemas.UserLogin, db: Session = Depends(get_db)):
 
     access_token = utils.create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
+
+@router.post("/logout",response_model=schemas.Token)
+def logout(user_in: schemas.UserOut, db: Session = Depends(get_db)):
+   response = RedirectResponse(url="/auth/register")
+   return response

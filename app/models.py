@@ -27,7 +27,7 @@ class File(Base):
     uploaded_by_id = Column(Integer, ForeignKey("users.id"))
     uploaded_at = Column(DateTime(timezone=True), default=datetime.now())
     is_folder = Column(Boolean, default=False)  
-
+    is_star = Column(Boolean, default=False)
     uploaded_by = relationship("User")
     downloads = relationship("DownloadLog", back_populates="file")
     logs = relationship("FileLog", back_populates="file")
