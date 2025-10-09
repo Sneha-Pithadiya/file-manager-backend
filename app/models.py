@@ -17,13 +17,15 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now())
-    
+
+
 
 class File(Base):
     __tablename__ = "files"
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String,  index=True, nullable=False)
     original_name = Column(String, nullable=False)
+    path = Column(String)
     uploaded_by_id = Column(Integer, ForeignKey("users.id"))
     uploaded_at = Column(DateTime(timezone=True), default=datetime.now())
     is_folder = Column(Boolean, default=False)  
