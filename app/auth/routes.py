@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Form, HTTPException, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from fastapi.security import OAuth2PasswordRequestForm
@@ -27,14 +27,20 @@ def register(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
     return user
 
 
+
 @router.post("/login", response_model=schemas.Token)
-def login(user_in: schemas.UserLogin, db: Session = Depends(get_db)):
-    user = utils.get_user_by_username(db, user_in.username)
-    if not user or not utils.verify_password(user_in.password, user.hashed_password):
+def login(
+    username: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    user = utils.get_user_by_username(db, username)
+    if not user or not utils.verify_password(password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Invalid username or password")
 
     access_token = utils.create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
+
 
 @router.post("/logout",response_model=schemas.Token)
 def logout(user_in: schemas.UserOut, db: Session = Depends(get_db)):
