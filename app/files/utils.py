@@ -29,7 +29,7 @@ def append_log(file_id: int, message: str):
     with open(log_file, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] {message}\n")
         
-def get_folder_full_path(folder: models.File):
+def get_folder_full_path(folder: models.FileModel):
     """Return the full path on disk for a folder object."""
     parts = [folder.filename]
     parent = folder.parent
