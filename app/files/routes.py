@@ -41,43 +41,70 @@ class FileCreate(BaseModel):
 
 def sync_uploads_with_db(db: Session, base_path: Path = UPLOAD_DIR, parent_id: Optional[int] = None):
     """
-    Recursively sync the filesystem with the database.
+    Recursively sync the filesystem with the database without creating duplicates.
     """
     base_path.mkdir(parents=True, exist_ok=True)
-    for entry in base_path.iterdir():
-        existing = db.query(models.FileModel).filter_by(filename=entry.name, parent_id=parent_id).first()
-        if not existing:
-            last = db.query(models.FileModel).order_by(models.FileModel.id.desc()).first()
-            next_id = (last.id + 1) if last else 1
 
-            new_file = models.FileModel(
-                id=next_id,
-                filename=entry.name,
-                original_name=entry.name,
-                path=str(entry.resolve()),
-                is_folder=entry.is_dir(),
-                parent_id=parent_id,
-                uploaded_at=datetime.now(),
-                uploaded_by_id=None,
-                size=entry.stat().st_size if entry.is_file() else 0,
-                is_star=False,
-            )
-            db.add(new_file)
-            db.commit()
-            db.refresh(new_file)
+    existing_entries = {
+        entry.filename.lower(): entry
+        for entry in db.query(models.FileModel)
+        .filter_by(parent_id=parent_id)
+        .all()
+    }
+
+    for entry in base_path.iterdir():
+        if entry.name.startswith(".") or entry.name.endswith(".tmp") or entry.name.endswith("~"):
+            continue
+
+        name_lower = entry.name.lower()
+
+        if name_lower in existing_entries:
+            existing_db_entry = existing_entries[name_lower]
+            if entry.is_file():
+                new_size = entry.stat().st_size
+                if existing_db_entry.size != new_size:
+                    existing_db_entry.size = new_size
+                    db.commit()
+            if entry.is_dir():
+                sync_uploads_with_db(db, entry, existing_db_entry.id)
+            continue  
+
+        last = db.query(models.FileModel).order_by(models.FileModel.id.desc()).first()
+        next_id = (last.id + 1) if last else 1
+
+        relative_path = Path("uploads") / entry.relative_to(UPLOAD_DIR)
+
+        new_file = models.FileModel(
+            id=next_id,
+            filename=entry.name,
+            original_name=entry.name,
+            path=str(relative_path).replace("\\", "/"),
+            is_folder=entry.is_dir(),
+            parent_id=parent_id,
+            uploaded_at=datetime.now(),
+            uploaded_by_id=None,
+            size=entry.stat().st_size if entry.is_file() else 0,
+            is_star=False,
+        )
+        db.add(new_file)
+        db.commit()
+        db.refresh(new_file)
 
         if entry.is_dir():
-            folder_in_db = db.query(models.FileModel).filter_by(filename=entry.name, parent_id=parent_id).first()
-            sync_uploads_with_db(db, entry, folder_in_db.id)
+            sync_uploads_with_db(db, entry, new_file.id)
 
 class UploadsEventHandler(FileSystemEventHandler):
     def __init__(self, db_factory):
         self.db_factory = db_factory
 
     def on_created(self, event):
-        if not event.is_directory or event.is_directory():  
-            db = self.db_factory()
+        if event.src_path.endswith(".tmp") or event.src_path.endswith("~"):
+            return
+
+        db = self.db_factory()
+        try:
             sync_uploads_with_db(db)
+        finally:
             db.close()
 
 def start_watcher(db_factory):
@@ -257,6 +284,7 @@ async def upload_file_or_folder(
     uploaded_file: List[UploadFile] = File(...),
     db: Session = Depends(get_db),
     parent_id: int = Form(None),
+    current_user: models.User = Depends(get_current_user),  
 ):
     saved_items = []
 
@@ -264,13 +292,7 @@ async def upload_file_or_folder(
         parent_folder = db.query(models.FileModel).filter(models.FileModel.id == parent_id).first()
         if not parent_folder:
             raise HTTPException(status_code=404, detail="Parent folder not found")
-        
-        if not parent_folder.path:
-            parent_folder.path = str(UPLOAD_DIR / parent_folder.filename)
-            Path(parent_folder.path).mkdir(parents=True, exist_ok=True)
-            db.commit()
-
-        upload_path = Path(parent_folder.path)
+        upload_path = Path(parent_folder.path or (UPLOAD_DIR / parent_folder.filename))
     else:
         upload_path = UPLOAD_DIR
 
@@ -287,7 +309,7 @@ async def upload_file_or_folder(
             filename=file.filename,
             original_name=file.filename,
             path=str(file_path.resolve()),
-            uploaded_by_id=None,
+            uploaded_by_id=current_user.id if current_user else None,
             is_folder=False,
             parent_id=parent_id,
             size=size_bytes,
@@ -296,6 +318,8 @@ async def upload_file_or_folder(
         db.add(file_db)
         db.commit()
         db.refresh(file_db)
+
+        utils.append_log(file_db.id, f"File uploaded: {file.filename}", username=current_user.username if current_user else "anonymous")
 
         saved_items.append({
             "id": file_db.id,
@@ -306,7 +330,6 @@ async def upload_file_or_folder(
         })
 
     return {"uploaded": saved_items}
-
 @router.get("/")
 def get_files(folder_id: Optional[int] = None, page: int = 1, limit: int = 10, db: Session = Depends(get_db)):
     query = db.query(models.FileModel)
