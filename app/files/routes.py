@@ -170,6 +170,7 @@ def create_folder(
     new_folder = models.FileModel(
         filename=folder.name,
         original_name=folder.name,
+        path = new_folder_path,
         uploaded_by_id=current_user.id,
         is_folder=True,
         parent_id=folder.parent_id
@@ -293,6 +294,7 @@ async def upload_file_or_folder(
         if not parent_folder:
             raise HTTPException(status_code=404, detail="Parent folder not found")
         upload_path = Path(parent_folder.path or (UPLOAD_DIR / parent_folder.filename))
+        print(upload_path)
     else:
         upload_path = UPLOAD_DIR
 
@@ -308,7 +310,7 @@ async def upload_file_or_folder(
         file_db = models.FileModel(
             filename=file.filename,
             original_name=file.filename,
-            path=str(file_path.resolve()),
+            path=str(file_path.relative_to(UPLOAD_DIR   )),
             uploaded_by_id=current_user.id if current_user else None,
             is_folder=False,
             parent_id=parent_id,
@@ -319,7 +321,7 @@ async def upload_file_or_folder(
         db.commit()
         db.refresh(file_db)
 
-        utils.append_log(file_db.id, f"File uploaded: {file.filename}", username=current_user.username if current_user else "anonymous")
+        utils.append_log(file_db.id, f"File uploaded: {file.filename} by" , username=current_user.username if current_user else "anonymous")
 
         saved_items.append({
             "id": file_db.id,
@@ -330,7 +332,8 @@ async def upload_file_or_folder(
         })
 
     return {"uploaded": saved_items}
-@router.get("/")
+
+@router.get("/")    
 def get_files(folder_id: Optional[int] = None, page: int = 1, limit: int = 10, db: Session = Depends(get_db)):
     query = db.query(models.FileModel)
     if folder_id is not None:
@@ -417,7 +420,7 @@ def download_file_or_folder(
     if not file_db:
         raise HTTPException(404, "Not found")
 
-    file_path = utils.get_folder_full_path(file_db) if file_db.is_folder else utils.UPLOAD_DIR / file_db.filename
+    file_path = utils.get_folder_full_path(file_db) if file_db.is_folder else  file_db.path
 
     if file_db.is_folder:
         zip_path = utils.UPLOAD_DIR / f"{file_db.id}_{file_db.filename}.zip"
@@ -435,7 +438,7 @@ def download_file_or_folder(
     db.add(file_log)
     db.commit()
     db.refresh(file_log)
-    utils.append_log(file_id, f"{current_user.username} downloaded at {datetime.now()}")
+    utils.append_log(file_id, f" downloaded by",username=current_user.username if current_user else "anonymous")
 
     return FileResponse(path=send_path, filename=send_name)
 
@@ -638,7 +641,7 @@ def move_files(
             src_file.filename = os.path.relpath(dest_path, utils.UPLOAD_DIR)
             db.commit()
 
-            utils.append_log(src_file.id, f"{current_user.username} moved '{src_file.original_name}'")
+            utils.append_log(src_file.id, f"moved '{src_file.original_name}'",username=current_user.username)
 
             moved_files.append({
                 "id": src_file.id,
@@ -706,3 +709,18 @@ def star_file_or_folder(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/search/{query}")
+def search_file(query: str, db: Session = Depends(get_db)):
+    """
+    Search for files anywhere in folders or subfolders
+    """
+    search_term = f"%{query}%"  
+
+    files = db.query(models.FileModel).filter(
+        models.FileModel.path.like(search_term)
+    ).all()
+
+    return {"results": files}
+
+        

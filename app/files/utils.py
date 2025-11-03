@@ -22,12 +22,12 @@ def get_log_path(file_id: int) -> Path:
     return LOG_DIR / f"file_{file_id}.txt"
 
 
-def append_log(file_id: int, message: str):
+def append_log(file_id: int, message: str, username: str):
     """Append a new line into the log file for a given file/folder"""
     log_file = get_log_path(file_id)
     timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")  
     with open(log_file, "a", encoding="utf-8") as f:
-        f.write(f"[{timestamp}] {message}\n")
+        f.write(f"[{timestamp}] {message} {username}\n ")
         
 def get_folder_full_path(folder: models.FileModel):
     """Return the full path on disk for a folder object."""
