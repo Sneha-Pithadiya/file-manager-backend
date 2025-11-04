@@ -3,7 +3,8 @@ from datetime import datetime
 
 from app import models
 
-UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR = Path("1")
+ZIP = Path(UPLOAD_DIR/"zip")
 LOG_DIR = Path("file_logs")
 
 UPLOAD_DIR.mkdir(exist_ok=True)

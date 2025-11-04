@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from sqlalchemy import func, null
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -24,7 +25,7 @@ from app.schemas import CopyRequest
 
 router = APIRouter()
 
-UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR = Path("1")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 
@@ -70,9 +71,9 @@ def sync_uploads_with_db(db: Session, base_path: Path = UPLOAD_DIR, parent_id: O
             continue  
 
         last = db.query(models.FileModel).order_by(models.FileModel.id.desc()).first()
-        next_id = (last.id + 1) if last else 1
-
-        relative_path = Path("uploads") / entry.relative_to(UPLOAD_DIR)
+        next_id = db.query(func.max(models.FileModel.id)).scalar() or 0
+        next_id += 1
+        relative_path = Path(UPLOAD_DIR) / entry.relative_to(UPLOAD_DIR)
 
         new_file = models.FileModel(
             id=next_id,
@@ -179,7 +180,7 @@ def create_folder(
     db.commit()
     db.refresh(new_folder)
 
-    utils.append_log(new_folder.id, f"{current_user.username} created folder in {parent_path}")
+    utils.append_log(new_folder.id, f" created folder in {parent_path}",username=current_user.username)
     log = models.FileLog(
         user_id = current_user.id,
         file_id = new_folder.id,
@@ -286,7 +287,7 @@ async def upload_file_or_folder(
     db: Session = Depends(get_db),
     parent_id: int = Form(None),
     current_user: models.User = Depends(get_current_user),  
-):
+):  
     saved_items = []
 
     if parent_id:
@@ -310,7 +311,7 @@ async def upload_file_or_folder(
         file_db = models.FileModel(
             filename=file.filename,
             original_name=file.filename,
-            path=str(file_path.relative_to(UPLOAD_DIR   )),
+            path=str(file_path.relative_to(UPLOAD_DIR)),
             uploaded_by_id=current_user.id if current_user else None,
             is_folder=False,
             parent_id=parent_id,
@@ -423,7 +424,7 @@ def download_file_or_folder(
     file_path = utils.get_folder_full_path(file_db) if file_db.is_folder else  file_db.path
 
     if file_db.is_folder:
-        zip_path = utils.UPLOAD_DIR / f"{file_db.id}_{file_db.filename}.zip"
+        zip_path = utils.ZIP /f"{file_db.id}_{file_db.filename}.zip"
         shutil.make_archive(str(zip_path).replace(".zip", ""), 'zip', str(file_path))
         send_path = zip_path
         send_name = f"{file_db.original_name}.zip"
@@ -431,9 +432,10 @@ def download_file_or_folder(
         send_path = file_path
         send_name = file_db.original_name
 
-    file_log = models.DownloadLog(
+    file_log = models.FileLog(
         file_id=file_db.id,
         user_id=current_user.id,
+        action="Download"
     )
     db.add(file_log)
     db.commit()
@@ -442,28 +444,61 @@ def download_file_or_folder(
 
     return FileResponse(path=send_path, filename=send_name)
 
+
 def move_to_recycle_bin_db(file_db, current_user, db: Session):
     """
-    Recursively move a file/folder and all nested children into RecycleBin (DB only).
+    Recursively move a file/folder to Recycle Bin safely.
     """
-    for child in file_db.children:
+    for child in getattr(file_db, "children", []):
         move_to_recycle_bin_db(child, current_user, db)
+
+    file_log = models.FileLog(
+        file_id=file_db.id,
+        user_id=current_user.id,
+        action="Delete"
+    )
+    db.add(file_log)
+
+    if file_db.is_folder:
+        file_path = utils.get_folder_full_path(file_db)
+    else:
+        file_path = Path(file_db.path) if file_db.path else utils.UPLOAD_DIR / file_db.filename
+
+    if file_db.parent_id != null:
+        parent_folder = utils.get_folder_full_path(db.query(models.FileModel).get(file_db.parent_id))
+    else :
+        parent_folder = utils.UPLOAD_DIR  
+
+    recycle_bin_folder = parent_folder / "RecycleBin"
+    recycle_bin_folder.mkdir(parents=True, exist_ok=True)
+
+    dest_path = recycle_bin_folder / file_db.filename
+    if dest_path.exists():
+        dest_path = recycle_bin_folder / f"{file_db.id}_{file_db.filename}"
+
+    if file_path.exists() and file_path != dest_path:
+        shutil.move(str(file_path), str(dest_path))
 
     recycle_item = models.RecycleBin(
         filename=file_db.filename,
         original_name=file_db.original_name,
         deleted_by_id=current_user.id,
         is_folder=file_db.is_folder,
-        parent_id=file_db.parent_id
+        path=str(dest_path)
     )
     db.add(recycle_item)
 
     log_path = utils.get_log_path(file_db.id)
     if log_path.exists():
         removed_log_path = log_path.parent / f"removed_log_file_{file_db.id}.txt"
-        shutil.move(log_path, removed_log_path)
+        shutil.move(str(log_path), str(removed_log_path))
 
-    db.delete(file_db)
+    try:
+        db.delete(file_db)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Error deleting DB record: {e}")
 
 @router.delete("/delete/{file_id}", summary="Delete a file or folder (DB only)")
 def delete_file_or_folder_db(
@@ -474,7 +509,7 @@ def delete_file_or_folder_db(
     file_db = db.query(models.FileModel).filter(models.FileModel.id == file_id).first()
     if not file_db:
         raise HTTPException(404, "File/Folder not found")
-    utils.append_log(file_db.id,f"{current_user.username} delete file {file_db.filename} at {datetime.now()}")
+    utils.append_log(file_db.id,f" delete file {file_db.filename} at {datetime.now()} by", username=current_user.username)
 
     move_to_recycle_bin_db(file_db, current_user, db)
 
@@ -673,7 +708,7 @@ def rename_file_or_folder(file_id: int, new_name: str, db: Session = Depends(get
         old_name = file.original_name
         file.original_name = new_name
         db.commit()
-        utils.append_log(file.id,f"{current_user.username} Renamed file '{old_name}' with '{new_name}'")
+        utils.append_log(file.id,f"Renamed file '{old_name}' with '{new_name}'", username=current_user.username)
         db.refresh(file)
         return {"message": f"Renamed '{old_name}' to '{new_name}'"}
     except Exception as e:
