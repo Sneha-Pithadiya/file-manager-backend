@@ -74,6 +74,8 @@ class RecycleBin(Base):
 
     deleted_by = relationship("User")
 
+
+
 # from sqlalchemy import Column, Integer, String(255), Boolean, DateTime, ForeignKey
 # from sqlalchemy.orm import relationship
 # from sqlalchemy.sql import func
