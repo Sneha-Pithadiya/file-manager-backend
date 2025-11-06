@@ -29,7 +29,6 @@ class FileModel(Base):
     is_folder = Column(Boolean, default=False)  
     is_star = Column(Boolean, default=False)
     uploaded_by = relationship("User")
-    downloads = relationship("DownloadLog", back_populates="file")
   
     parent_id = Column(Integer, ForeignKey("files.id"), nullable=True)
     parent = relationship(
@@ -39,16 +38,6 @@ class FileModel(Base):
         foreign_keys=[parent_id]
     )
     size = Column(Float, default=0)
-
-class DownloadLog(Base):
-    __tablename__ = "download_logs"
-    id = Column(Integer, primary_key=True, index=True)
-    file_id = Column(Integer, ForeignKey("files.id"))
-    user_id = Column(Integer, ForeignKey("users.id"))
-    downloaded_at = Column(DateTime(timezone=True), default=datetime.now())
-
-    file = relationship("FileModel", back_populates="downloads")
-    user = relationship("User")
 
 
 class FileLog(Base):

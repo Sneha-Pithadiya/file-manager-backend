@@ -3,7 +3,7 @@ from datetime import datetime
 
 from app import models
 
-UPLOAD_DIR = Path("1")
+UPLOAD_DIR = Path("uploads")
 ZIP = Path(UPLOAD_DIR/"zip")
 LOG_DIR = Path("file_logs")
 
@@ -11,7 +11,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 LOG_DIR.mkdir(exist_ok=True)
 
 
-def secure_filename(filename: str) -> str:
+def secure_filename(filename: str) -> str: 
     return filename.replace(" ", "_")
 
 
