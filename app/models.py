@@ -10,19 +10,20 @@ class FolderCreate(BaseModel):
     parent_id: int = None  
     
 class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(255), unique=True, index=True, nullable=False)
-    full_name = Column(String(255), nullable=True)
-    hashed_password = Column(String(255), nullable=False)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), default=datetime.now())
+        __tablename__ = "users"
+        id = Column(Integer, primary_key=True, index=True)
+        username = Column(String(255), unique=True, index=True, nullable=False)
+        role = Column(String(50), default="user")
+        full_name = Column(String(255), nullable=True)
+        hashed_password = Column(String(255), nullable=False)
+        is_active = Column(Boolean, default=True)
+        created_at = Column(DateTime(timezone=True), default=datetime.now())
 
 class FileModel(Base):
     __tablename__ = "files"
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String(255),  index=True, nullable=False)
-    original_name = Column(String(255), nullable=False)
+    # original_name = Column(String(255), nullable=False)
     path = Column(String(255))
     uploaded_by_id = Column(Integer, ForeignKey("users.id"))
     uploaded_at = Column(DateTime(timezone=True), default=datetime.now())
@@ -55,7 +56,7 @@ class RecycleBin(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String(255), index=True, nullable=False) 
-    original_name = Column(String(255), nullable=False)
+    # original_name = Column(String(255), nullable=False)
     deleted_by_id = Column(Integer, ForeignKey("users.id"))
     deleted_at = Column(DateTime(timezone=True), default=datetime.now)
     is_folder = Column(Boolean, default=False)
