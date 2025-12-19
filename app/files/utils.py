@@ -3,7 +3,7 @@ from datetime import datetime
 
 from app import models
 
-UPLOAD_DIR = Path("1")
+UPLOAD_DIR = Path("uploads")
 ZIP = Path(UPLOAD_DIR/"zip")
 LOG_DIR = Path("file_logs")
 
@@ -11,7 +11,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 LOG_DIR.mkdir(exist_ok=True)
 
 
-def secure_filename(filename: str) -> str:
+def secure_filename(filename: str) -> str: 
     return filename.replace(" ", "_")
 
 
@@ -38,4 +38,15 @@ def get_folder_full_path(folder: models.FileModel):
         parts.insert(0, parent.filename)
         parent = parent.parent
     return UPLOAD_DIR.joinpath(*parts)
+
+def to_db_path(relative_p: Path) -> str:
+    # Prepend 'uploads/' to match your DB structure
+    return (Path("uploads") / relative_p).as_posix()
+
+def get_parent_db_path(db_path_str: str) -> str:
+    # If the path is 'uploads/folder/file.txt', parent is 'uploads/folder'
+    p = Path(db_path_str)
+    if p.name == "uploads" or len(p.parts) <= 1:
+        return None
+    return p.parent.as_posix()
 

@@ -12,7 +12,7 @@ origins = [
     "http://localhost:5173",  
     "http://127.0.0.1:5173",
     "http://localhost:3000",
-    "http://127.0.0.1:3000"
+    "http://127.0.0.1:3000",
     
 ]
 
@@ -23,12 +23,19 @@ app.add_middleware(
     allow_methods=["*"],  
     allow_headers=["*"],  
 )
-@app.on_event("startup")
-def startup_event():
-    file_routes.start_watcher(SessionLocal)
-    db = SessionLocal()
-    file_routes.sync_uploads_with_db(db)
-    db.close()
+# import threading
+
+# @app.on_event("startup")
+# def startup_event():
+#     # Start the watcher in a separate thread
+#     watcher_thread = threading.Thread(target=file_routes.start_watcher, args=(SessionLocal,), daemon=True)
+#     watcher_thread.start()
+
+#     # Sync uploads with DB once
+#     db = SessionLocal()
+#     file_routes.sync_uploads_with_db(db)
+#     db.close()
+
 
 app.include_router(auth_routes.router, prefix="/auth", tags=["auth"])
 app.include_router(user_routes.router, prefix="/users", tags=["users"])
