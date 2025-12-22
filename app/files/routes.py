@@ -154,31 +154,31 @@ def create_folder(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-   
     existing = db.query(models.FileModel).filter(
         models.FileModel.filename == folder.name,
         models.FileModel.parent_id == folder.parent_id,
         models.FileModel.is_folder == True
     ).first()
+    
     if existing:
         raise HTTPException(status_code=400, detail="Folder already exists")
 
-   
     if folder.parent_id:
         parent_folder = db.query(models.FileModel).filter(models.FileModel.id == folder.parent_id).first()
         if not parent_folder:
             raise HTTPException(status_code=404, detail="Parent folder not found")
-        parent_path = get_folder_full_path(parent_folder)
+        # Ensure we get a Path object from the parent
+        parent_path = Path(get_folder_full_path(parent_folder))
     else:
-        parent_path = UPLOAD_DIR
+        parent_path = Path(UPLOAD_DIR)
 
     new_folder_path = parent_path / folder.name
     new_folder_path.mkdir(parents=True, exist_ok=True)
 
     new_folder = models.FileModel(
         filename=folder.name,
-        # original_name=folder.name,
-        path = new_folder_path,
+        # Standardize path with forward slashes using as_posix()
+        path=new_folder_path.as_posix(), 
         uploaded_by_id=current_user.id,
         is_folder=True,
         parent_id=folder.parent_id
@@ -187,33 +187,25 @@ def create_folder(
     db.commit()
     db.refresh(new_folder)
 
-    utils.append_log(new_folder.id, f" created folder in {parent_path} by ",username=current_user.username)
-    log = models.FileLog(
-        user_id = current_user.id,
-        file_id = new_folder.id,
-        action = "Create"
-        
-        
-    )
-    db.add(log)
+    utils.append_log(new_folder.id, f" created folder by ", username=current_user.username)
+    db.add(models.FileLog(user_id=current_user.id, file_id=new_folder.id, action="Create"))
     db.commit()
-    db.refresh(log)
 
     return {
         "id": new_folder.id,
         "name": new_folder.filename,
         "type": "folder",
+        "path": new_folder.path,
         "uploaded_by": current_user.username
     }
 
-#create file
+# create_file
 @router.post("/createfile")
 def create_file(
     file: FileCreate,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    # 1. Handle parent_id: Convert 0 to None for database compatibility
     actual_parent_id = file.parent_id if file.parent_id and file.parent_id != 0 else None
 
     existing = db.query(models.FileModel).filter(
@@ -225,44 +217,32 @@ def create_file(
     if existing:
         raise HTTPException(status_code=400, detail="File already exists")
 
-    # 2. Determine Physical Path
     if actual_parent_id:
         parent_folder = db.query(models.FileModel).filter(models.FileModel.id == actual_parent_id).first()
         if not parent_folder:
             raise HTTPException(status_code=404, detail="Parent folder not found")
-        # Use your utility but ensure we work with Path objects
         parent_disk_path = Path(get_folder_full_path(parent_folder))
     else:
         parent_disk_path = Path(UPLOAD_DIR)
 
-    # 3. Create the physical file
+    # Create physical file
     new_file_disk_path = parent_disk_path / file.name
     new_file_disk_path.touch(exist_ok=True)
 
-    # 4. Generate the DB Path String with Forward Slashes
-    # We calculate the path relative to the root storage or just force posix
-    # If your DB expects "uploads/...", do this:
-    if actual_parent_id:
-        # Standardize parent path and append file name
-        db_path_str = f"{parent_folder.path.replace('\\', '/')}/{file.name}"
-    else:
-        db_path_str = f"uploads/{file.name}"
-
     new_file = models.FileModel(
         filename=file.name,
-        path=db_path_str,  # ✅ Stored as 'uploads/file.txt'
+        # Standardize path with forward slashes using as_posix()
+        path=new_file_disk_path.as_posix(), 
         uploaded_by_id=current_user.id,
         is_folder=False,
-        parent_id=actual_parent_id, # ✅ Stored as NULL if 0
+        parent_id=actual_parent_id,
     )
     
     db.add(new_file)
     db.commit()
     db.refresh(new_file)
 
-    # Logging and Return
-    utils.append_log(new_file.id, f" created file in {parent_disk_path.as_posix()} by ", username=current_user.username)
-    
+    utils.append_log(new_file.id, f" created file by ", username=current_user.username)
     db.add(models.FileLog(user_id=current_user.id, file_id=new_file.id, action="Create"))
     db.commit()
 
@@ -273,7 +253,7 @@ def create_file(
         "type": "file",
         "uploaded_by": current_user.username
     }
-#get file/folder 
+#get/folder 
 @router.get("/folder/{folder_id}", summary="Get contents of a folder")
 def get_folder_contents(
     folder_id: int = 0,  
@@ -338,15 +318,13 @@ async def upload_file_or_folder(
         with open(file_path, "wb") as f:
             f.write(await file.read())
 
-        size_bytes = file_path.stat().st_size
-
         file_db = models.FileModel(
             filename=file.filename,
-            path=str(file_path),
+            path=file_path.as_posix(),  
             uploaded_by_id=current_user.id if current_user else None,
             is_folder=False,
             parent_id=parent_id,
-            size=size_bytes,
+            size=file_path.stat().st_size,
             is_star=False,
         )
         db.add(file_db)
@@ -359,7 +337,7 @@ async def upload_file_or_folder(
             "id": file_db.id,
             "name": file.filename,
             "type": "file",
-            "size": size_bytes,
+            "size": file_db.size,
             "parent_id": parent_id
         })
 
@@ -640,64 +618,65 @@ def permanently_delete_from_recycle_bin_db(
 
     return {"status": "Permanently deleted"}
 
-#check for duplicate and generate unique filename
-def generate_unique_filename(filename: str, existing_files: set) -> str:
+def generate_unique_filename(filename: str, existing_names: set) -> str:
+    if filename not in existing_names:
+        return filename
+    
     name, ext = os.path.splitext(filename)
     counter = 1
     new_name = filename
-    while new_name in existing_files:
+    while new_name in existing_names:
         new_name = f"{name}_copy{counter}{ext}"
         counter += 1
     return new_name
 
-#recursive copy help function
-def recursive_copy(file_db, dest_folder_id, db: Session, current_user):
+def recursive_copy(src_record, dest_folder_id, db: Session, current_user):
     """
-    Recursively copy a file or folder to a destination folder.
+    src_record: The FileModel object we are copying
+    dest_folder_id: The ID of the parent we are pasting into
     """
     if dest_folder_id:
-        dest_folder = db.query(models.FileModel).filter(models.FileModel.id == dest_folder_id).first()
-        if not dest_folder:
-            raise HTTPException(404, "Destination folder not found")
-        dest_path = Path(dest_folder.path)
+        dest_parent = db.query(models.FileModel).filter(models.FileModel.id == dest_folder_id).first()
+        dest_parent_path = Path(dest_parent.path)
     else:
-        dest_path = UPLOAD_DIR
+        dest_parent_path = Path(UPLOAD_DIR)
 
-    dest_path.mkdir(parents=True, exist_ok=True)
+    dest_parent_path.mkdir(parents=True, exist_ok=True)
 
-    existing_files = {f.name for f in dest_path.iterdir()}
-    new_filename = generate_unique_filename(file_db.filename, existing_files)
+    # 2. Prevent name collisions in the destination
+    existing_names = {f.name for f in dest_parent_path.iterdir()}
+    new_filename = generate_unique_filename(src_record.filename, existing_names)
+    new_physical_path = dest_parent_path / new_filename
 
-    new_file_path = dest_path / new_filename
-
-    new_file = models.FileModel(
+    # 3. Create DB Record
+    new_record = models.FileModel(
         filename=new_filename,
-        path=str(new_file_path),
-        is_folder=file_db.is_folder,
+        path=new_physical_path.as_posix(), # ✅ Standard POSIX path
+        is_folder=src_record.is_folder,
         parent_id=dest_folder_id,
         uploaded_by_id=current_user.id,
-        uploaded_at=datetime.now(),
-        size=0  
+        size=src_record.size if not src_record.is_folder else 0
     )
-    db.add(new_file)
-    db.commit()
-    db.refresh(new_file)
+    db.add(new_record)
+    db.flush() # Get new_record.id for children
 
-    if file_db.is_folder:
-        new_file_path.mkdir(exist_ok=True)
-        for child in file_db.children:
-            recursive_copy(child, new_file.id, db, current_user)
+    # 4. Physical Operation
+    src_physical_path = Path(src_record.path)
+    
+    if src_record.is_folder:
+        new_physical_path.mkdir(exist_ok=True)
+        # Recursively copy children from the DB relationship
+        for child in src_record.children:
+            recursive_copy(child, new_record.id, db, current_user)
     else:
-        src_path = Path(file_db.path)
-        if not src_path.exists():
-            raise HTTPException(404, f"Source file {file_db.filename} not found")
-        shutil.copy2(src_path, new_file_path)
-        new_file.size = new_file_path.stat().st_size
-        db.commit()
+        if src_physical_path.exists():
+            shutil.copy2(src_physical_path, new_physical_path)
+            new_record.size = new_physical_path.stat().st_size
+        else:
+            print(f"Warning: Physical file {src_physical_path} missing during copy.")
 
-    # Log
-    utils.append_log(new_file.id, f"Copied from {file_db.filename}", username=current_user.username)
-    return new_file
+    db.commit()
+    return new_record
 
 # copy_file_or_folder
 def copy_file_or_folder(src: models.FileModel, dest_folder: models.FileModel, db: Session, current_user: models.User):
@@ -727,115 +706,99 @@ def copy_file_or_folder(src: models.FileModel, dest_folder: models.FileModel, db
     
     return new_file
 
-# copy file/folder
 @router.post("/copy")
 def copy_files(
     request: CopyRequest,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    dest_folder = None
-    if request.destination_folder_id:
-        dest_folder = db.query(models.FileModel).filter(
-            models.FileModel.id == request.destination_folder_id,
-            models.FileModel.is_folder == True
-        ).first()
-        if not dest_folder:
-            raise HTTPException(404, "Destination folder not found")
-
-    copied_files = []
-
+    dest_id = request.destination_folder_id if request.destination_folder_id != 0 else None
+    
+    copied_items = []
     for file_id in request.file_ids:
+        # Load with children to ensure recursive copy works
         src_file = db.query(models.FileModel).options(joinedload(models.FileModel.children)).filter(
             models.FileModel.id == file_id
         ).first()
-        if not src_file:
-            continue
         
+        if not src_file: continue
+
         try:
-            new_file = recursive_copy(src_file, dest_folder.id if dest_folder else None, db, current_user) 
-            copied_files.append({
-                "id": new_file.id,
-                "filename": new_file.filename, 
-                "type": "folder" if new_file.is_folder else "file"
-            })
+            new_record = recursive_copy(src_file, dest_id, db, current_user)
+            copied_items.append({"id": new_record.id, "name": new_record.filename})
         except Exception as e:
             db.rollback()
-            raise HTTPException(status_code=500, detail=f"Failed to copy {src_file.filename}: {str(e)}")
+            raise HTTPException(500, f"Copy failed for {src_file.filename}: {str(e)}")
 
-    return {"copied_files": copied_files}
+    return {"status": "success", "copied_files": copied_items}
 
-#cut or move file/folder
 @router.post("/move")
 def move_files(
-    request: CopyRequest,
+    request: CopyRequest, 
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
+    # 1. Get Destination
     dest_folder = None
     if request.destination_folder_id and request.destination_folder_id != 0:
         dest_folder = db.query(models.FileModel).filter(
             models.FileModel.id == request.destination_folder_id,
             models.FileModel.is_folder == True
         ).first()
-        if not dest_folder:
-            raise HTTPException(404, "Destination folder not found")
-
+        dest_path_obj = Path(dest_folder.path)
+    else:
+        dest_path_obj = Path(UPLOAD_DIR)
 
     moved_files = []
 
     for file_id in request.file_ids:
         src_file = db.query(models.FileModel).filter(models.FileModel.id == file_id).first()
-        if not src_file:
-            continue
+        if not src_file: continue
 
-        src_path = Path(utils.UPLOAD_DIR) / src_file.filename
-        if dest_folder:
-            dest_path = Path(utils.get_folder_full_path(dest_folder)) / src_file.filename
-        else:
-            dest_path = Path(utils.UPLOAD_DIR) / src_file.filename
+        src_path = Path(src_file.path)
+        
+        # Determine initial target path
+        target_path = dest_path_obj / src_file.filename
 
         if not src_path.exists():
-            raise HTTPException(404, f"Source '{src_file.filename}' not found on disk")
+            raise HTTPException(404, f"Source '{src_file.path}' not found on disk")
+
+        # Check: Cannot move a folder into itself
+        if src_file.is_folder and dest_path_obj.resolve().is_relative_to(src_path.resolve()):
+            raise HTTPException(400, "Cannot move a folder into its own subfolder")
 
         try:
-            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            # Handle name collisions at destination
+            existing_names = {f.name for f in dest_path_obj.iterdir()}
+            final_name = generate_unique_filename(src_file.filename, existing_names)
+            final_dest_path = dest_path_obj / final_name
 
-            if src_file.is_folder and dest_path.resolve().is_relative_to(src_path.resolve()):
-                raise HTTPException(400, "Cannot move a folder into its own subfolder")
+            # Physical Move
+            shutil.move(str(src_path), str(final_dest_path))
 
-            # Handle filename collisions
-            existing_files = {f.name for f in dest_path.parent.iterdir()}
-            if dest_path.name in existing_files:
-                base, ext = os.path.splitext(dest_path.name)
-                counter = 1
-                while f"{base}_copy{counter}{ext}" in existing_files:
-                    counter += 1
-                dest_path = dest_path.parent / f"{base}_copy{counter}{ext}"
-
-            shutil.move(str(src_path), str(dest_path))
-
-            # FIX: filename and path
-            src_file.filename = dest_path.name
-            src_file.path = str(dest_path.relative_to(utils.UPLOAD_DIR))
+            # Update DB Record
+            src_file.filename = final_name
+            src_file.path = final_dest_path.as_posix()
             src_file.parent_id = dest_folder.id if dest_folder else None
 
+            if src_file.is_folder:
+                update_child_paths(src_file, db)
+
             db.commit()
-
-            utils.append_log(src_file.id, f"moved '{src_file.filename}'", username=current_user.username)
-
-            moved_files.append({
-                "id": src_file.id,
-                "name": src_file.filename,
-                "type": "folder" if src_file.is_folder else "file"  
-            })
+            moved_files.append({"id": src_file.id, "name": src_file.filename})
 
         except Exception as e:
             db.rollback()
-            raise HTTPException(status_code=500, detail=f"Failed to move '{src_file.filename}': {str(e)}")
+            raise HTTPException(500, f"Error moving {src_file.filename}: {str(e)}")
 
-    return {"moved_files": moved_files}
+    return {"status": "success", "moved_files": moved_files}
 
+def update_child_paths(parent_record, db):
+    for child in parent_record.children:
+        new_child_path = Path(parent_record.path) / child.filename
+        child.path = new_child_path.as_posix()
+        if child.is_folder:
+            update_child_paths(child, db)
 #rename file/folder
 @router.put("/rename")
 def rename_file_or_folder(
@@ -927,7 +890,7 @@ def star_file_or_folder(
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
-#search
+# search
 @router.get("/search/{query}")
 def search_file(query: str, db: Session = Depends(get_db)):
     """
@@ -947,7 +910,7 @@ def sync_disk_to_db(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user)
 ):
-    upload_root = Path(UPLOAD_DIR) # e.g., ./storage/uploads
+    upload_root = Path(UPLOAD_DIR) 
     
     db_files = {
         f.path.replace("\\", "/"): f
@@ -997,6 +960,7 @@ def sync_disk_to_db(
         "message": "Disk sync completed",
         "created_entries": created_count
     }
+
 #recycle bin get
 @router.get("/recyclebin")
 def get_recyclebin(db:Session = Depends(get_db)):
@@ -1010,7 +974,6 @@ def get_recyclebin(db:Session = Depends(get_db)):
 
 RECYCLE_BIN_DIR = os.path.join(UPLOAD_DIR, "RecycleBin")
 
-#restore
 @router.post("/restore/{file_id}")
 def restore_file(
     file_id: int,
@@ -1025,22 +988,28 @@ def restore_file(
     src_path = Path(recycle_file.path)
     file_name = src_path.name
 
+    # Logic to find the original parent: 
+    # Usually, if you store in .recyclebin/filename, the original parent is the root or specific folder
     original_parent_disk_path = src_path.parent.parent
 
-    # find original parent folder in DB
+    # Standardize the search path to match your DB format (Posix)
+    search_path = original_parent_disk_path.as_posix()
+
+    # Find original parent folder in DB
     original_parent_db = db.query(models.FileModel).filter(
-        func.coalesce(models.FileModel.path, models.FileModel.filename) == str(original_parent_disk_path)
+        models.FileModel.path == search_path
     ).first()
 
     if original_parent_db:
         target_folder_disk_path = original_parent_disk_path
         target_parent_id = original_parent_db.id  
     else:
-        target_folder_disk_path = UPLOAD_DIR
+        target_folder_disk_path = Path(UPLOAD_DIR)
         target_parent_id = None
 
     target_path = target_folder_disk_path / file_name
 
+    # Handle Overwrite Logic
     if target_path.exists():
         if not replace:
             raise HTTPException(
@@ -1048,12 +1017,15 @@ def restore_file(
                 detail=f"File '{file_name}' already exists at destination."
             )
         else:
+            # Important: search using .as_posix() to find the existing DB record
             old_file_db = db.query(models.FileModel).filter(
-                models.FileModel.path == str(target_path)
+                models.FileModel.path == target_path.as_posix()
             ).first()
+            
             if old_file_db:
                 db.delete(old_file_db)
                 db.commit()
+            
             try:
                 if target_path.is_file():
                     target_path.unlink()
@@ -1062,16 +1034,20 @@ def restore_file(
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Failed to delete existing file: {str(e)}")
 
+    # Physical Move
     try:
-        os.makedirs(target_folder_disk_path, exist_ok=True)
-        shutil.move(str(src_path), str(target_path))
+        target_folder_disk_path.mkdir(parents=True, exist_ok=True)
+        # Use .as_posix() or string conversion for shutil
+        shutil.move(src_path.as_posix(), target_path.as_posix())
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to restore file on disk: {str(e)}")
 
+    # DB Update
     db.delete(recycle_file)  # remove from recycle bin
+    
     restored_file = models.FileModel(
         filename=file_name,
-        path=str(target_path),
+        path=target_path.as_posix(),  
         uploaded_by_id=current_user.id,
         is_folder=recycle_file.is_folder,
         parent_id=target_parent_id,
@@ -1082,6 +1058,6 @@ def restore_file(
 
     return {
         "status": "success",
-        "message": f"File '{file_name}' restored successfully to {target_folder_disk_path}",
-        "target_path": str(target_path)
+        "message": f"File '{file_name}' restored successfully",
+        "target_path": restored_file.path
     }
